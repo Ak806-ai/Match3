@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gem Matcher Pro</title>
+    <style>
+        body {
+            background-color: #1a1a2e;
+            color: white;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        #game-container {
+            position: relative;
+            box-shadow: 0 0 50px rgba(0,0,0,0.5);
+            border: 4px solid #16213e;
+            border-radius: 8px;
+        }
+        canvas {
+            display: block;
+            background-color: #0f3460;
+            cursor: pointer;
+        }
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        .overlay {
+            background: rgba(0, 0, 0, 0.85);
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            pointer-events: auto;
+            border: 2px solid #e94560;
+            display: none;
+        }
+        .overlay h1 { margin-top: 0; color: #e94560; }
+        button {
+            background: #e94560;
+            border: none;
+            color: white;
+            padding: 10px 25px;
+            font-size: 18px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-top: 15px;
+        }
+        button:hover { background: #ff5d78; }
+        #stats {
+            width: 480px;
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="stats">
+        <div>Level: <span id="lvl-val">1</span></div>
+        <div>Score: <span id="score-val">0</span> / <span id="target-val">1000</span></div>
+        <div>Moves: <span id="moves-val">30</span></div>
+    </div>
+
+    <div id="game-container">
+        <canvas id="gameCanvas" width="480" height="480"></canvas>
+        <div id="ui-layer">
+            <div id="msg-overlay" class="overlay">
+                <h1 id="msg-title">Level Complete!</h1>
+                <p id="msg-body">You reached the goal.</p>
+                <button onclick="gameState.nextLevel()">Continue</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+/** * GAME CONFIGURATION & LEVELS
+ */
+const GRID_SIZE = 8;
+const TILE_SIZE = 60;
+const COLORS = [
+    '#FF4136', '#2ECC40', '#0074D9', '#FFDC00', '#B10DC9', '#FF851B', '#7FDBFF'
+];
+const STONE_COLOR = '#444444';
+
+const LEVELS = [
+    { goal: 1000, types: 5, moves: 30, blocks: [] },
+    { goal: 2500, types: 6, moves: 25, blocks: [] },
+    { goal: 4000, types: 6, moves: 30, blocks: [0, 7, 56, 63] }, // Corners
+    { goal: 6000, types: 7, moves: 20, blocks: [] },
+    { goal: 10000, types: 7, moves: 15, blocks: [27, 28, 35, 36, 19, 44, 26, 29, 34, 37] } // Cross pattern
+];
+
+/**
+ * GAME ENGINE
+ */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const scoreEl = document.getElementById('score-val');
+const movesEl = document.getElementById('moves-val');
+const levelEl = document.getElementById('lvl-val');
+const targetEl = document.getElementById('target-val');
+const overlay = document.getElementById('msg-overlay');
+
+let gameState = {
+    currentLevel: 0,
+    score: 0,
+    moves: 0,
+    grid: [],
+    isProcessing: false,
+    selected: null,
+    gameOver: false,
+
+    init() {
+        const lvl = LEVELS[this.currentLevel];
+        this.score = 0;
+        this.moves = lvl.moves;
+        this.gameOver = false;
+        overlay.style.display = 'none';
+        this.createGrid(lvl);
+        this.updateUI();
+    },
+
+    createGrid(lvl) {
+        this.grid = [];
+        for (let i = 0; i < GRID_SIZE * GRID_SIZE; i++) {
+            if (lvl.blocks.includes(i)) {
+                this.grid[i] = { type: 'stone', x: i % GRID_SIZE, y: Math.floor(i / GRID_SIZE), offset: 0 };
+            } else {
+                this.grid[i] = { 
+                    type: Math.floor(Math.random() * lvl.types), 
+                    x: i % GRID_SIZE, 
+                    y: Math.floor(i / GRID_SIZE),
+                    offset: 0 
+                };
+            }
+        }
+        // Ensure no starting matches
+        while(this.findMatches().length > 0) {
+            this.grid.forEach(g => { if(g.type !== 'stone') g.type = Math.floor(Math.random() * lvl.types); });
+        }
+    },
+
+    updateUI() {
+        scoreEl.innerText = this.score;
+        movesEl.innerText = this.moves;
+        levelEl.innerText = this.currentLevel + 1;
+        targetEl.innerText = LEVELS[this.currentLevel].goal;
+    },
+
+    nextLevel() {
+        this.currentLevel++;
+        if (this.currentLevel >= LEVELS.length) {
+            alert("Victory! You've beaten all levels!");
+            this.currentLevel = 0;
+        }
+        this.init();
+    },
+
+    checkEndState() {
+        if (this.score >= LEVELS[this.currentLevel].goal) {
+            this.showOverlay("Level Complete!", "Moving to next challenge...");
+        } else if (this.moves <= 0) {
+            this.showOverlay("Game Over", "Out of moves!");
+            this.currentLevel = 0; // Restart
+        }
+    },
+
+    showOverlay(title, body) {
+        this.gameOver = true;
+        document.getElementById('msg-title').innerText = title;
+        document.getElementById('msg-body').innerText = body;
+        overlay.style.display = 'block';
+    }
+};
+
+/**
+ * CORE LOGIC
+ */
+function getIdx(x, y) { return y * GRID_SIZE + x; }
+
+function swap(idx1, idx2, isManual = true) {
+    const t1 = gameState.grid[idx1];
+    const t2 = gameState.grid[idx2];
+    
+    if (t1.type === 'stone' || t2.type === 'stone') return;
+
+    // Visual Swap Animation
+    gameState.isProcessing = true;
+    
+    // Logic swap
+    const tempType = t1.type;
+    t1.type = t2.type;
+    t2.type = tempType;
+
+    const matches = gameState.findMatches();
+    if (matches.length > 0) {
+        if (isManual) gameState.moves--;
+        handleMatches(matches);
+    } else if (isManual) {
+        // Swap back if no match
+        setTimeout(() => {
+            t2.type = t1.type;
+            t1.type = tempType;
+            gameState.isProcessing = false;
+        }, 300);
+    } else {
+        gameState.isProcessing = false;
+    }
+}
+
+function handleMatches(matches) {
+    matches.forEach(idx => {
+        if (gameState.grid[idx].type !== 'stone') {
+            gameState.grid[idx].type = null;
+            gameState.score += 50;
+        }
+    });
+    
+    setTimeout(() => applyGravity(), 300);
+}
+
+function applyGravity() {
+    for (let x = 0; x < GRID_SIZE; x++) {
+        let emptySpaces = 0;
+        for (let y = GRID_SIZE - 1; y >= 0; y--) {
+            const idx = getIdx(x, y);
+            if (gameState.grid[idx].type === 'stone') {
+                emptySpaces = 0;
+                continue;
+            }
+            if (gameState.grid[idx].type === null) {
+                emptySpaces++;
+            } else if (emptySpaces > 0) {
+                const dropIdx = getIdx(x, y + emptySpaces);
+                gameState.grid[dropIdx].type = gameState.grid[idx].type;
+                gameState.grid[idx].type = null;
+            }
+        }
+        // Fill top
+        for (let y = 0; y < GRID_SIZE; y++) {
+            const idx = getIdx(x, y);
+            if (gameState.grid[idx].type === null) {
+                gameState.grid[idx].type = Math.floor(Math.random() * LEVELS[gameState.currentLevel].types);
+            }
+        }
+    }
+    
+    gameState.updateUI();
+    const newMatches = gameState.findMatches();
+    if (newMatches.length > 0) {
+        setTimeout(() => handleMatches(newMatches), 400);
+    } else {
+        gameState.isProcessing = false;
+        gameState.checkEndState();
+    }
+}
+
+gameState.findMatches = function() {
+    let matchedIndices = new Set();
+    
+    // Horizontal
+    for (let y = 0; y < GRID_SIZE; y++) {
+        for (let x = 0; x < GRID_SIZE - 2; x++) {
+            let t1 = this.grid[getIdx(x,y)], t2 = this.grid[getIdx(x+1,y)], t3 = this.grid[getIdx(x+2,y)];
+            if (t1.type !== null && t1.type !== 'stone' && t1.type === t2.type && t1.type === t3.type) {
+                matchedIndices.add(getIdx(x,y)); matchedIndices.add(getIdx(x+1,y)); matchedIndices.add(getIdx(x+2,y));
+            }
+        }
+    }
+    // Vertical
+    for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE - 2; y++) {
+            let t1 = this.grid[getIdx(x,y)], t2 = this.grid[getIdx(x,y+1)], t3 = this.grid[getIdx(x,y+2)];
+            if (t1.type !== null && t1.type !== 'stone' && t1.type === t2.type && t1.type === t3.type) {
+                matchedIndices.add(getIdx(x,y)); matchedIndices.add(getIdx(x,y+1)); matchedIndices.add(getIdx(x,y+2));
+            }
+        }
+    }
+    return Array.from(matchedIndices);
+};
+
+/**
+ * RENDERING
+ */
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    gameState.grid.forEach((tile, i) => {
+        if (tile.type === null) return;
+        
+        ctx.fillStyle = tile.type === 'stone' ? STONE_COLOR : COLORS[tile.type];
+        const padding = 5;
+        const x = tile.x * TILE_SIZE + padding;
+        const y = tile.y * TILE_SIZE + padding;
+        const size = TILE_SIZE - padding * 2;
+
+        // Draw Gem
+        ctx.beginPath();
+        if (tile.type === 'stone') {
+            ctx.rect(x, y, size, size);
+        } else {
+            ctx.roundRect(x, y, size, size, 10);
+        }
+        ctx.fill();
+
+        // Highlight selected
+        if (gameState.selected === i) {
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+        }
+    });
+
+    requestAnimationFrame(draw);
+}
+
+/**
+ * INPUT HANDLING
+ */
+canvas.addEventListener('mousedown', e => {
+    if (gameState.isProcessing || gameState.gameOver) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    
+    const x = Math.floor(mx / TILE_SIZE);
+    const y = Math.floor(my / TILE_SIZE);
+    const clickedIdx = getIdx(x, y);
+
+    if (gameState.selected === null) {
+        if (gameState.grid[clickedIdx].type !== 'stone') {
+            gameState.selected = clickedIdx;
+        }
+    } else {
+        const s = gameState.grid[gameState.selected];
+        const dist = Math.abs(x - s.x) + Math.abs(y - s.y);
+        
+        if (dist === 1) {
+            swap(gameState.selected, clickedIdx);
+        }
+        gameState.selected = null;
+    }
+});
+
+// Start Game
+gameState.init();
+draw();
+
+</script>
+</body>
+</html>
